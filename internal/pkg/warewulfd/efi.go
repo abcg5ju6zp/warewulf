@@ -44,8 +44,17 @@ func HandleEfiBoot(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	case "grub.cfg":
+		// grub.cfg is the boot descriptor: pin its generation here so the
+		// OS stages that GRUB loads afterwards resolve only to these files.
+		gen, pinErr := pinBootGeneration(ctx.rinfo, ctx.remoteNode, ctx.conf.Warewulf.AutobuildOverlays())
+		if pinErr != nil {
+			wwlog.ErrorExc(pinErr, "could not pin boot generation")
+			sendBootRetry(w, ctx.rinfo, "grub", pinErr)
+			return
+		}
+		ctx.bootgen = gen
 		stageFile = path.Join(ctx.conf.Paths.Sysconfdir, "warewulf/grub/grub.cfg.ww")
-		tmplData = buildTemplateVars(ctx.conf, ctx.rinfo, ctx.remoteNode)
+		tmplData = buildTemplateVars(ctx.conf, ctx.rinfo, ctx.remoteNode, ctx.bootgen)
 		if !util.IsFile(stageFile) {
 			wwlog.Error("couldn't find grub.cfg template for %s", imageName)
 			w.WriteHeader(http.StatusNotFound)

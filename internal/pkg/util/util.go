@@ -382,12 +382,31 @@ func CpioCreate(
 	format string,
 	cpio_args ...string,
 ) (err error) {
+	// Build into a temporary file in the destination directory and rename
+	// it atomically into place. A boot generation that hardlinks the
+	// existing output therefore keeps the old complete inode during a
+	// rebuild instead of observing a partially overwritten file.
+	if err = os.MkdirAll(filepath.Dir(ofile), 0o755); err != nil {
+		return fmt.Errorf("could not create image directory: %s: %w", filepath.Dir(ofile), err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(ofile), "."+filepath.Base(ofile)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	_ = tmp.Close()
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
 	args := []string{
 		"--quiet",
 		"--create",
 		"--directory", rootdir,
 		"--format", format,
-		"--file=" + ofile,
+		"--file=" + tmpName,
 	}
 
 	if cpioRenumberInodesSupported() {
@@ -417,7 +436,10 @@ func CpioCreate(
 		wwlog.Debug("cpio: %s", out)
 	}
 
-	return FirstError(err, <-err_in)
+	if err = FirstError(err, <-err_in); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, ofile)
 }
 
 /*
@@ -430,13 +452,6 @@ func FileGz(
 ) (err error) {
 	file_gz := file + ".gz"
 
-	if IsFile(file_gz) {
-		err := os.Remove(file_gz)
-		if err != nil {
-			return fmt.Errorf("could not remove existing file: %s: %w", file_gz, err)
-		}
-	}
-
 	compressor, err := exec.LookPath("pigz")
 	if err != nil {
 		wwlog.Verbose("Could not locate PIGZ")
@@ -446,68 +461,55 @@ func FileGz(
 			return fmt.Errorf("no compressor program for image file: %s: %w", file_gz, err)
 		}
 	}
-
 	wwlog.Verbose("Using compressor program: %s", compressor)
 
-	proc := exec.Command(
-		compressor,
-		"--keep",
-		file)
-
-	out, err := proc.CombinedOutput()
-	if len(out) > 0 {
-		outStr := string(out[:])
-		if err != nil && strings.HasSuffix(compressor, "gzip") && strings.Contains(outStr, "unrecognized option") {
-			var gzippedFile *os.File
-			var gzipStderr io.ReadCloser
-
-			/* Older version of gzip, try it another way: */
-			wwlog.Verbose("%s does not recognize the --keep flag, trying redirected stdout", compressor)
-
-			/* Open the output file for writing: */
-			gzippedFile, err = os.Create(file_gz)
-			if err != nil {
-				return fmt.Errorf("unable to open compressed image file for writing: %s: %w", file_gz, err)
-			}
-
-			/* We'll execute gzip with output to stdout and attach stdout to the compressed file we just
-			   created:
-			*/
-			proc = exec.Command(
-				compressor,
-				"--stdout",
-				file)
-			proc.Stdout = gzippedFile
-			gzipStderr, err = proc.StderrPipe()
-			if err != nil {
-				return fmt.Errorf("unable to open stderr pipe for compression program: %s: %w", compressor, err)
-			}
-
-			/* Execute the command: */
-			err = proc.Start()
-			if err != nil {
-				_ = proc.Wait()
-				_ = gzippedFile.Close()
-				_ = os.Remove(file_gz)
-				err = fmt.Errorf("unable to successfully execute compression program: %s: %w", compressor, err)
-			} else {
-				err = proc.Wait()
-				if cerr := gzippedFile.Close(); cerr != nil {
-					wwlog.Warn("failed to close compressed image file %s: %s", file_gz, cerr)
-				}
-				if err != nil {
-					_ = os.Remove(file_gz)
-					err = fmt.Errorf("unable to successfully create compressed image file: %s: %w", file_gz, err)
-				} else {
-					wwlog.Verbose("Successfully compressed image file: %s", file_gz)
-				}
-			}
-			out, _ = io.ReadAll(gzipStderr)
-		}
-		wwlog.Debug(string(out))
+	// Preserve the source file mode for the compressed output.
+	sourceInfo, err := os.Stat(file)
+	if err != nil {
+		return err
 	}
 
-	return err
+	// Compress into a temporary file in the destination directory and rename
+	// it atomically into place, so a boot generation hardlinking the
+	// existing .gz keeps the complete old inode during a rebuild.
+	if err = os.MkdirAll(filepath.Dir(file_gz), 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(file_gz), "."+filepath.Base(file_gz)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if err = tmp.Chmod(sourceInfo.Mode()); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+
+	proc := exec.Command(compressor, "--stdout", file)
+	proc.Stdout = tmp
+	stderr, err := proc.StderrPipe()
+	if err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err = proc.Start(); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("could not start compression program %s: %w", compressor, err)
+	}
+	errOut, _ := io.ReadAll(stderr)
+	waitErr := proc.Wait()
+	if cerr := tmp.Close(); cerr != nil && waitErr == nil {
+		waitErr = cerr
+	}
+	if waitErr != nil {
+		_ = os.Remove(tmpName)
+		wwlog.Error("compression failed: %s", strings.TrimSpace(string(errOut)))
+		return fmt.Errorf("could not create compressed image %s: %w", file_gz, waitErr)
+	}
+	return os.Rename(tmpName, file_gz)
 }
 
 /*

@@ -23,14 +23,19 @@ type templateVars struct {
 	Authority     string
 	KernelArgs    string
 	KernelVersion string
+	BootID        string
 	Root          string
 	TLS           bool
 	Tags          map[string]string
 	NetDevs       map[string]*node.NetDev
 }
 
+// HandleProvision dispatches a /provision/ request to the handler for its
+// stage. The stage is taken from the URL path or the stage query parameter
+// (see parseRequest). Every stage handler performs its own request parsing
+// through initHandleRequest.
 func HandleProvision(w http.ResponseWriter, req *http.Request) {
-	// Parse just enough to determine the stage
+	// Parse just enough to determine the stage.
 	rinfo, err := parseRequest(req)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -38,7 +43,7 @@ func HandleProvision(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Dispatch to the appropriate stage handler
+	// Dispatch to the appropriate stage handler.
 	var handler http.HandlerFunc
 	switch rinfo.stage {
 	case "ipxe":

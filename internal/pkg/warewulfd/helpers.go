@@ -21,7 +21,7 @@ import (
 
 // buildTemplateVars constructs the templateVars struct with all necessary
 // fields, including handling IPv6 authority formatting and kernel version resolution.
-func buildTemplateVars(conf *warewulfconf.WarewulfYaml, rinfo parsedRequest, remoteNode node.Node) *templateVars {
+func buildTemplateVars(conf *warewulfconf.WarewulfYaml, rinfo parsedRequest, remoteNode node.Node, gen *bootGeneration) *templateVars {
 	kernelArgs := ""
 	kernelVersion := ""
 	if remoteNode.Kernel != nil {
@@ -51,6 +51,11 @@ func buildTemplateVars(conf *warewulfconf.WarewulfYaml, rinfo parsedRequest, rem
 		wwlog.Error("Could not parse request IP address: %s", rinfo.ipaddr)
 	}
 
+	bootID := ""
+	if gen != nil {
+		bootID = gen.data.ID
+	}
+
 	return &templateVars{
 		Id:            remoteNode.Id(),
 		Cluster:       remoteNode.ClusterName,
@@ -66,14 +71,61 @@ func buildTemplateVars(conf *warewulfconf.WarewulfYaml, rinfo parsedRequest, rem
 		Ipxe:          remoteNode.Ipxe,
 		KernelArgs:    kernelArgs,
 		KernelVersion: kernelVersion,
+		BootID:        bootID,
 		Root:          remoteNode.Root,
 		NetDevs:       remoteNode.NetDevs,
 		Tags:          remoteNode.Tags}
 }
 
+// Descriptor served when a generation cannot be pinned because the complete
+// asset set does not exist. It explicitly restarts the node instead of
+// emitting URLs that could resolve to a mix of current files.
+const ipxeBootRetryTemplate = `#!ipxe
+echo !!
+echo !! %s
+echo !! Boot assets are incomplete; restarting the boot in 15s...
+echo !!
+sleep 15
+reboot
+`
+
+const grubBootRetryTemplate = `echo "!!"
+echo "!! %s"
+echo "!! Boot assets are incomplete; restarting the boot in 15s..."
+echo "!!"
+sleep 15
+reboot
+`
+
+// sendBootRetry serves a minimal descriptor that directs the node to restart
+// its boot because no complete generation could be pinned. format is either
+// "ipxe" or "grub".
+func sendBootRetry(w http.ResponseWriter, rinfo parsedRequest, format string, cause error) {
+	body := ""
+	switch format {
+	case "grub":
+		body = fmt.Sprintf(grubBootRetryTemplate, cause.Error())
+	default:
+		body = fmt.Sprintf(ipxeBootRetryTemplate, cause.Error())
+	}
+	w.Header().Set("Content-Type", "text")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	_, _ = w.Write([]byte(body))
+	nodeID := ""
+	if rinfo.hwaddr != "" {
+		nodeID = rinfo.hwaddr
+	}
+	updateStatus(nodeID, rinfo.stage, "BOOT_RETRY", rinfo.ipaddr)
+}
+
 // sendResponse handles the common response logic for provision handlers.
 // If tmplData is non-nil, it renders the stageFile as a template. Otherwise, it
 // sends stageFile as a raw file (with optional .gz compression).
+//
+// When the request is bound to a boot generation, only that generation's
+// protected files are ever served and a successful send is recorded as
+// delivered; a missing or changed file yields 410 Gone so the node restarts
+// rather than silently falling back to current assets.
 func sendResponse(w http.ResponseWriter, req *http.Request, stageFile string, tmplData *templateVars, ctx *requestContext) {
 	wwlog.Serv("stage_file '%s'", stageFile)
 
@@ -122,6 +174,10 @@ func sendResponse(w http.ResponseWriter, req *http.Request, stageFile string, tm
 				stageFile += ".gz"
 
 				if !util.IsFile(stageFile) {
+					if ctx.bootgen != nil {
+						sendGenerationGone(w, ctx, fmt.Errorf("compressed file missing from boot generation: %s", stageFile))
+						return
+					}
 					wwlog.Error("unprepared for compressed version of file %s",
 						stageFile)
 					w.WriteHeader(http.StatusNotFound)
@@ -133,10 +189,28 @@ func sendResponse(w http.ResponseWriter, req *http.Request, stageFile string, tm
 				w.WriteHeader(http.StatusNotFound)
 			}
 
+			// For a pinned boot the selected protected file was verified
+			// by the stage handler; re-check it here to close the window
+			// between resolution and transfer.
+			if ctx.bootgen != nil {
+				if err := ctx.bootgen.verifyProtectedFile(stageFile); err != nil {
+					_ = ctx.bootgen.invalidate()
+					sendGenerationGone(w, ctx, err)
+					return
+				}
+			}
+
 			err := sendFile(w, req, stageFile, ctx.remoteNode.Id())
 			if err != nil {
 				wwlog.ErrorExc(err, "")
 				return
+			}
+
+			if ctx.bootgen != nil {
+				if err := ctx.bootgen.markDelivered(ctx.rinfo.stage); err != nil {
+					wwlog.Warn("could not record delivery of %s in boot generation %s: %s",
+						ctx.rinfo.stage, ctx.bootgen.data.ID, err)
+				}
 			}
 		}
 
@@ -148,8 +222,22 @@ func sendResponse(w http.ResponseWriter, req *http.Request, stageFile string, tm
 		updateStatus(ctx.remoteNode.Id(), ctx.rinfo.stage, "BAD_REQUEST", ctx.rinfo.ipaddr)
 
 	} else {
+		if ctx.bootgen != nil {
+			sendGenerationGone(w, ctx, fmt.Errorf("file missing from boot generation: %s", stageFile))
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		wwlog.Error("Not found: %s", stageFile)
 		updateStatus(ctx.remoteNode.Id(), ctx.rinfo.stage, "NOT_FOUND", ctx.rinfo.ipaddr)
 	}
+}
+
+// sendGenerationGone writes a 410 Gone response that explicitly directs the
+// node to restart its boot. It is the only response when a pinned generation
+// can no longer provide its recorded file; no replacement file is served.
+func sendGenerationGone(w http.ResponseWriter, ctx *requestContext, err error) {
+	wwlog.Error("boot generation %s for node %s: %s",
+		ctx.bootgen.data.ID, ctx.bootgen.data.NodeID, err)
+	w.WriteHeader(http.StatusGone)
+	updateStatus(ctx.bootgen.data.NodeID, ctx.rinfo.stage, "GEN_GONE", ctx.rinfo.ipaddr)
 }

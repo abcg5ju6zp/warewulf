@@ -18,6 +18,13 @@ func HandleKernel(w http.ResponseWriter, req *http.Request) {
 
 	if !ctx.remoteNode.Valid() {
 		wwlog.Error("%s (unknown/unconfigured node)", ctx.rinfo.hwaddr)
+	} else if ctx.bootgen != nil {
+		// Pinned boot: resolve only the generation's protected kernel.
+		stageFile, err = ctx.bootgen.resolveStage("kernel", ctx.rinfo.compress)
+		if err != nil {
+			sendGenerationGone(w, ctx, err)
+			return
+		}
 	} else {
 		kernel_ := kernel.FromNode(&ctx.remoteNode)
 		if kernel_ == nil {

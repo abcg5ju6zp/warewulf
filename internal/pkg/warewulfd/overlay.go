@@ -22,6 +22,18 @@ func HandleSystemOverlay(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if ctx.bootgen != nil {
+		// Pinned boot: no rebuild and no re-resolution; serve only the
+		// complete file recorded in the generation.
+		stageFile, stageErr := ctx.bootgen.resolveStage("system", ctx.rinfo.compress)
+		if stageErr != nil {
+			sendGenerationGone(w, ctx, stageErr)
+			return
+		}
+		sendResponse(w, req, stageFile, nil, ctx)
+		return
+	}
+
 	stageFile, err := getOverlayFile(
 		ctx.remoteNode,
 		"system",
@@ -58,6 +70,18 @@ func HandleRuntimeOverlay(w http.ResponseWriter, req *http.Request) {
 	if !ctx.remoteNode.Valid() {
 		wwlog.Error("%s (unknown/unconfigured node)", ctx.rinfo.hwaddr)
 		sendResponse(w, req, "", nil, ctx)
+		return
+	}
+
+	if ctx.bootgen != nil {
+		// Pinned boot: no rebuild and no re-resolution; serve only the
+		// complete file recorded in the generation.
+		stageFile, stageErr := ctx.bootgen.resolveStage("runtime", ctx.rinfo.compress)
+		if stageErr != nil {
+			sendGenerationGone(w, ctx, stageErr)
+			return
+		}
+		sendResponse(w, req, stageFile, nil, ctx)
 		return
 	}
 

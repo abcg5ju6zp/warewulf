@@ -19,6 +19,10 @@ wwinit|wwinit:*)
     export wwinit_uuid="$(dmidecode -s system-uuid)"
     export wwinit_assetkey="$(dmidecode -s chassis-asset-tag)"
 
+    # Boot generation pinned by the first boot descriptor; empty on legacy
+    # boots whose kernel command line does not carry it.
+    export wwinit_boot="$(getarg wwinit.boot)"
+
     wwinit_tmpfs_size="$(getarg wwinit.tmpfs.size)"
     if [ -n "$wwinit_tmpfs_size" ]; then
         export wwinit_tmpfs_size_option="-o size=${wwinit_tmpfs_size}"

@@ -37,6 +37,10 @@ get_stage() {
     if [ -n "${cacert}" ]; then
         cacert_opt="--cacert ${cacert}"
     fi
+    boot_opt=""
+    if [ -n "${wwinit_boot}" ]; then
+        boot_opt="--data-urlencode wwboot=${wwinit_boot}"
+    fi
     local hwaddr="${ww_hwaddr}"
     case "${stage}" in
         image)   uri="${base}/image/${hwaddr}" ;;
@@ -44,7 +48,7 @@ get_stage() {
         runtime) uri="${base}/runtime/${hwaddr}" ;;
     esac
     (
-        curl --location --get ${localport} ${cacert_opt} \
+        curl --location --get ${localport} ${cacert_opt} ${boot_opt} \
             --retry 60 --retry-connrefused --retry-delay 1 \
             --data-urlencode "assetkey=${wwinit_assetkey}" \
             --data-urlencode "uuid=${wwinit_uuid}" \

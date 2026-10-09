@@ -134,4 +134,13 @@ func Reload() {
 	if err := LoadNodeStatus(); err != nil {
 		wwlog.Error("Could not prepopulate node status DB: %s", err)
 	}
+
+	// Load in-progress boot generations so interrupted boots continue
+	// against the same complete files, then reap expired ones.
+	if err := LoadBootGenerations(); err != nil {
+		wwlog.Error("Could not load boot generations: %s", err)
+	}
+	if err := sweepBootGenerations(); err != nil {
+		wwlog.Warn("Could not sweep boot generations: %s", err)
+	}
 }

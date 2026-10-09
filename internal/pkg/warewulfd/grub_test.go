@@ -41,9 +41,14 @@ nodes:
     network devices:
       default:
         hwaddr: 00:00:00:00:ff:ff
-    image name: none
+    image name: suse
     tags:
       GrubMenuEntry: dracut`)
+
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/vmlinuz-1.1.0")
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/initramfs-1.1.0.img")
+	env.CreateFile("/srv/warewulf/images/suse.img")
+	env.CreateFile("/srv/warewulf/images/suse.img.gz")
 
 	env.WriteFile("/etc/warewulf/grub/grub.cfg.ww", "{{ .Tags.GrubMenuEntry }} {{ .Authority }}")
 

@@ -17,6 +17,7 @@ type requestContext struct {
 	conf       *warewulfconf.WarewulfYaml
 	rinfo      parsedRequest
 	remoteNode node.Node
+	bootgen    *bootGeneration
 }
 
 // initHandleRequest performs common initial request parsing, security checks,
@@ -44,11 +45,28 @@ func initHandleRequest(w http.ResponseWriter, req *http.Request) (*requestContex
 		}
 	}
 
-	remoteNode, err := GetOrDiscoverNode(rinfo.hwaddr, conf.Warewulf.AutobuildOverlays())
-	if err != nil && err != node.ErrNoUnconfigured {
-		wwlog.ErrorExc(err, "")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return nil, err
+	var remoteNode node.Node
+	var bootgen *bootGeneration
+	if rinfo.bootid != "" {
+		// A generation-pinned request resolves only to the recorded
+		// generation: never look up or discover a current node and never
+		// fall back to newer assets.
+		gen, genErr := lookupBootGeneration(rinfo.bootid, rinfo.hwaddr)
+		if genErr != nil {
+			w.WriteHeader(http.StatusGone)
+			wwlog.ErrorExc(genErr, "")
+			return nil, genErr
+		}
+		remoteNode = gen.data.Node
+		bootgen = gen
+	} else {
+		var nodeErr error
+		remoteNode, nodeErr = GetOrDiscoverNode(rinfo.hwaddr, conf.Warewulf.AutobuildOverlays())
+		if nodeErr != nil && nodeErr != node.ErrNoUnconfigured {
+			wwlog.ErrorExc(nodeErr, "")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return nil, nodeErr
+		}
 	}
 
 	if remoteNode.AssetKey != "" && remoteNode.AssetKey != rinfo.assetkey {
@@ -62,6 +80,7 @@ func initHandleRequest(w http.ResponseWriter, req *http.Request) (*requestContex
 		conf:       conf,
 		rinfo:      rinfo,
 		remoteNode: remoteNode,
+		bootgen:    bootgen,
 	}, nil
 }
 
@@ -71,6 +90,7 @@ type parsedRequest struct {
 	remoteport int
 	assetkey   string
 	uuid       string
+	bootid     string
 	stage      string
 	efifile    string
 	compress   string
@@ -160,6 +180,15 @@ func parseRequest(req *http.Request) (parsedRequest, error) {
 	}
 	if len(req.URL.Query()["uuid"]) > 0 {
 		ret.uuid = req.URL.Query()["uuid"][0]
+	}
+
+	// The boot generation ("代际") is taken from the wwboot query parameter
+	// or the X-WW-Boot header. It is absent on legacy requests and on the
+	// first descriptor request, both of which remain supported.
+	if len(req.URL.Query()["wwboot"]) > 0 {
+		ret.bootid = req.URL.Query()["wwboot"][0]
+	} else if bootid := req.Header.Get("X-WW-Boot"); bootid != "" {
+		ret.bootid = bootid
 	}
 
 	if len(req.URL.Query()["compress"]) > 0 {

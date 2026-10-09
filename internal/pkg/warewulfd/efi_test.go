@@ -23,7 +23,7 @@ var efiBootTests = []struct {
 	{"find shim: node with missing image returns 404", "/efiboot/shim.efi", "", 404, "10.10.10.11:9873"},
 	{"find grub", "/efiboot/grub.efi", "", 200, "10.10.10.10:9873"},
 	{"find grub: node with missing image returns 404", "/efiboot/grub.efi", "", 404, "10.10.10.11:9873"},
-	{"find grub.cfg", "/efiboot/grub.cfg", "dracut 10.10.0.1:9873", 200, "10.10.10.11:9873"},
+	{"grub.cfg for node with incomplete assets serves restart descriptor", "/efiboot/grub.cfg", "", 200, "10.10.10.11:9873"},
 }
 
 func Test_HandleEfiBoot(t *testing.T) {
@@ -87,4 +87,17 @@ nodes:
 			assert.Equal(t, tt.status, res.StatusCode)
 		})
 	}
+
+	// The grub.cfg descriptor must explicitly direct a restart, not render
+	// asset URLs that would resolve to an incomplete boot.
+	t.Run("grub.cfg content directs restart", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/efiboot/grub.cfg", nil)
+		req.RemoteAddr = "10.10.10.11:9873"
+		w := httptest.NewRecorder()
+		HandleEfiBoot(w, req)
+		data, err := io.ReadAll(w.Result().Body)
+		assert.NoError(t, err)
+		assert.Contains(t, string(data), "Boot assets are incomplete")
+		assert.Contains(t, string(data), "reboot")
+	})
 }

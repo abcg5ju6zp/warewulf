@@ -128,6 +128,7 @@ func Test_HandleIpxeDracutNet(t *testing.T) {
       default:
         hwaddr: 00:00:00:00:00:00
         device: net`)
+	createCompleteImageAssets(t, env, "rockylinux-9", "1.1.0")
 	env.ImportFile("etc/warewulf/ipxe/default.ipxe", "../../../etc/ipxe/default.ipxe")
 
 	dbErr := LoadNodeDB()
@@ -167,6 +168,7 @@ func Test_HandleIpxe(t *testing.T) {
 
 	env.WriteFile("/etc/warewulf/nodes.conf", `nodes:
   n3:
+    image name: suse
     network devices:
       default:
         hwaddr: 00:00:00:00:00:ff
@@ -174,6 +176,11 @@ func Test_HandleIpxe(t *testing.T) {
     ipxe template: test
     kernel:
       version: 1.1.1`)
+
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/vmlinuz-1.1.1")
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/initramfs-1.1.1.img")
+	env.CreateFile("/srv/warewulf/images/suse.img")
+	env.CreateFile("/srv/warewulf/images/suse.img.gz")
 
 	env.WriteFile("/etc/warewulf/ipxe/test.ipxe", "{{.KernelVersion}}{{range $devname, $netdev := .NetDevs}}{{if and $netdev.Hwaddr $netdev.Device}} ifname={{$netdev.Device}}:{{$netdev.Hwaddr}} {{end}}{{end}} {{.Ipaddr}} {{.Ipaddr6}} {{.Authority}}")
 

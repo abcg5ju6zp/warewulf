@@ -98,6 +98,18 @@ func NewProfile(id string) (profileconf Profile) {
 	return profileconf
 }
 
+/*
+RestoreNode returns n carrying the given id, as reconstructed from an
+immutable snapshot (e.g. a boot generation manifest). The returned node is
+marked valid and its nested disk and filesystem identifiers are restored.
+*/
+func RestoreNode(id string, n Node) Node {
+	n.id = id
+	n.valid = true
+	n.setIds(id)
+	return n
+}
+
 func EmptyNode() (nodeconf Node) {
 	nodeconf.Expand()
 	return nodeconf

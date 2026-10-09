@@ -30,7 +30,7 @@ echo "Reading asset key..."
 smbios --type 3 --get-string 8 --set assetkey
 
 base="(http,{{.Authority}})"
-params="assetkey=${assetkey}"
+params="assetkey=${assetkey}{{- if .BootID }}&wwboot={{.BootID}}{{- end }}"
 kernel="${base}/kernel/${net_default_mac}?${params}"
 
 set default={{ or .Tags.GrubMenuEntry "single-stage" }}
@@ -155,7 +155,7 @@ menuentry "Two stage boot with dracut" --id dracut {
     wwinit_uri="http://{{.Ipaddr}}:{{.Port}}/provision/${net_default_mac}"
     wwinit_server="http://{{.Ipaddr}}:{{.Port}}"
     net_args="rd.neednet=1 {{range $devname, $netdev := .NetDevs}}{{if and $netdev.Hwaddr $netdev.Device}} ifname={{$netdev.Device}}:{{$netdev.Hwaddr}} {{end}}{{end}}"
-    wwinit_args="root=wwinit:{{default "tmpfs" .Root}} wwinit.server=${wwinit_server} wwinit.uri=${wwinit_uri} init=/warewulf/run-init"
+    wwinit_args="root=wwinit:{{default "tmpfs" .Root}} wwinit.server=${wwinit_server} wwinit.uri=${wwinit_uri}{{- if .BootID }} wwinit.boot={{.BootID}}{{- end }} init=/warewulf/run-init"
 
     echo
     echo "Downloading kernel image..."

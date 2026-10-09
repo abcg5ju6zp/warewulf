@@ -48,7 +48,7 @@ nodes:
     network devices:
       default:
         hwaddr: 00:00:00:00:ff:ff
-    image name: none
+    image name: suse
     tags:
       GrubMenuEntry: dracut
   n3:
@@ -56,6 +56,7 @@ nodes:
       default:
         hwaddr: 00:00:00:00:00:ff
         device: net
+    image name: suse
     ipxe template: test
     kernel:
       version: 1.1.1`)
@@ -71,9 +72,13 @@ nodes:
 		arpFile = prevArpFile
 	}()
 	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/vmlinuz-1.1.0")
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/vmlinuz-1.1.1")
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/initramfs-1.1.0.img")
+	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/initramfs-1.1.1.img")
 	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/usr/lib64/efi/shim.efi")
 	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/usr/share/efi/x86_64/grub.efi")
-	env.CreateFile("/var/lib/warewulf/chroots/suse/rootfs/boot/initramfs-1.1.0.img")
+	env.CreateFile("/srv/warewulf/images/suse.img")
+	env.CreateFile("/srv/warewulf/images/suse.img.gz")
 	env.WriteFile("/etc/warewulf/ipxe/test.ipxe", "{{.KernelVersion}}{{range $devname, $netdev := .NetDevs}}{{if and $netdev.Hwaddr $netdev.Device}} ifname={{$netdev.Device}}:{{$netdev.Hwaddr}} {{end}}{{end}} {{.Ipaddr}} {{.Ipaddr6}} {{.Authority}}")
 	env.WriteFile("/etc/warewulf/grub/grub.cfg.ww", "{{ .Tags.GrubMenuEntry }} {{ .Authority }}")
 
@@ -87,7 +92,9 @@ nodes:
 	conf.Ipaddr6 = "fd00:10::1"
 	assert.NoError(t, os.MkdirAll(path.Join(conf.Paths.OverlayProvisiondir(), "n1"), 0700))
 	assert.NoError(t, os.WriteFile(path.Join(conf.Paths.OverlayProvisiondir(), "n1", "__SYSTEM__.img"), []byte("system overlay"), 0600))
+	assert.NoError(t, os.WriteFile(path.Join(conf.Paths.OverlayProvisiondir(), "n1", "__SYSTEM__.img.gz"), []byte("system overlay gz"), 0600))
 	assert.NoError(t, os.WriteFile(path.Join(conf.Paths.OverlayProvisiondir(), "n1", "__RUNTIME__.img"), []byte("runtime overlay"), 0600))
+	assert.NoError(t, os.WriteFile(path.Join(conf.Paths.OverlayProvisiondir(), "n1", "__RUNTIME__.img.gz"), []byte("runtime overlay gz"), 0600))
 
 	for _, tt := range provisionSendTests {
 		t.Run(tt.description, func(t *testing.T) {
