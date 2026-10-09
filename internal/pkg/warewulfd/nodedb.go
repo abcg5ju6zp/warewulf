@@ -126,12 +126,19 @@ func GetOrDiscoverNode(hwaddr string, autobuildOverlays bool) (node.Node, error)
 	return db.yml.GetNode(nodeFound.Id())
 }
 
-func Reload() {
+// Reload re-reads the node configuration and refreshes the node status
+// table. It returns the first encountered error so callers driving a
+// transaction can tell whether the daemon has adopted the on-disk
+// version; legacy callers may ignore the return value.
+func Reload() error {
 	if err := LoadNodeDB(); err != nil {
 		wwlog.Error("Could not load node DB: %s", err)
+		return err
 	}
 
 	if err := LoadNodeStatus(); err != nil {
 		wwlog.Error("Could not prepopulate node status DB: %s", err)
+		return err
 	}
+	return nil
 }

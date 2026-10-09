@@ -56,6 +56,21 @@ func Parse(data []byte) (nodeList NodesYaml, err error) {
 	return nodeList, nil
 }
 
+// Clone returns a deep, independently mutable copy of the registry.
+// Unexported fields (ids, validity flags) are reset and repopulated by
+// subsequent merge/lookup calls.
+func (config *NodesYaml) Clone() (*NodesYaml, error) {
+	data, err := yaml.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	clone, err := Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return &clone, nil
+}
+
 /*
 Get a node with its merged in nodes
 */

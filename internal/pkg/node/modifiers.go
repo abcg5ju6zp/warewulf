@@ -3,7 +3,6 @@ package node
 import (
 	"bytes"
 	"encoding/gob"
-	"os"
 
 	"github.com/pkg/errors"
 
@@ -113,6 +112,11 @@ func (config *NodesYaml) Persist() error {
 	return config.PersistToFile(warewulfconf.Get().Paths.NodesConf())
 }
 
+// atomicWriteConfig is indirected so tests can inject a publish failure.
+// Production writes go through the temp-file + rename helper, guaranteeing
+// that nodes.conf is never left partially written.
+var atomicWriteConfig = util.AtomicWriteFile
+
 func (config *NodesYaml) PersistToFile(configFile string) (err error) {
 	if configFile == "" {
 		configFile = warewulfconf.Get().Paths.NodesConf()
@@ -122,18 +126,8 @@ func (config *NodesYaml) PersistToFile(configFile string) (err error) {
 		wwlog.Error("%s", dumpErr)
 		return dumpErr
 	}
-	file, err := os.OpenFile(configFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
+	if err = atomicWriteConfig(configFile, out, 0o644); err != nil {
 		wwlog.Error("%s", err)
-		return err
-	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = cerr
-		}
-	}()
-	_, err = file.WriteString(string(out))
-	if err != nil {
 		return err
 	}
 	wwlog.Debug("persisted: %s", configFile)

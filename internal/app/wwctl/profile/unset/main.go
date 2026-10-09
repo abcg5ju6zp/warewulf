@@ -1,7 +1,9 @@
 package unset
 
 import (
+	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/spf13/cobra"
 	wwctlunset "github.com/warewulf/warewulf/internal/app/wwctl/unset"
@@ -32,6 +34,11 @@ func CobraRunE(vars *wwctlunset.Vars) func(cmd *cobra.Command, args []string) er
 		nodeDB, err := node.New()
 		if err != nil {
 			return fmt.Errorf("failed to load node database: %w", err)
+		}
+		// snapshot the pre-change registry for closure/affected analysis
+		prevDB, err := nodeDB.Clone()
+		if err != nil {
+			return fmt.Errorf("could not snapshot configuration: %w", err)
 		}
 
 		// Validate scoping: sub-entity fields require their parent scope flags
@@ -87,12 +94,21 @@ func CobraRunE(vars *wwctlunset.Vars) func(cmd *cobra.Command, args []string) er
 			wwlog.Output("Applying following changes:\n%s", summary)
 		}
 
-		if err := nodeDB.Persist(); err != nil {
-			return fmt.Errorf("failed to persist changes: %w", err)
+		roots := make([]string, 0, len(profileChanges))
+		for profileId := range profileChanges {
+			roots = append(roots, profileId)
 		}
-
-		if err := warewulfd.DaemonReload(); err != nil {
-			wwlog.Warn("failed to reload daemon: %v", err)
+		sort.Strings(roots)
+		if err := warewulfd.ApplyProfileChangeCLI(roots, prevDB, &nodeDB); err != nil {
+			// The configuration itself was published durably; only the
+			// daemon notification failed, so keep the historical behavior
+			// of warning without failing the command. The daemon resumes
+			// the change on its next reload or startup.
+			if errors.Is(err, warewulfd.ErrDaemonReload) {
+				wwlog.Warn("nodes.conf updated but daemon reload failed (the change will be adopted on next reload): %v", err)
+			} else {
+				return fmt.Errorf("failed to apply profile change: %w", err)
+			}
 		}
 
 		wwlog.Info("Successfully unset fields on %d profile(s)", modifiedCount)

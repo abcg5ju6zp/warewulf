@@ -2,6 +2,7 @@ package set
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -50,6 +51,11 @@ func CobraRunE(vars *variables) func(cmd *cobra.Command, args []string) (err err
 		nodeDB, err := node.New()
 		if err != nil {
 			return fmt.Errorf("could not open configuration: %w", err)
+		}
+		// snapshot the pre-change registry for closure/affected analysis
+		prevDB, err := nodeDB.Clone()
+		if err != nil {
+			return fmt.Errorf("could not snapshot configuration: %w", err)
 		}
 
 		if len(args) == 0 {
@@ -171,9 +177,11 @@ func CobraRunE(vars *variables) func(cmd *cobra.Command, args []string) (err err
 			wwlog.Output("Applying following changes:\n %s", summary)
 		}
 
-		if err := nodeDB.Persist(); err != nil {
-			return err
+		roots := make([]string, 0, len(profileChanges))
+		for profileId := range profileChanges {
+			roots = append(roots, profileId)
 		}
-		return warewulfd.DaemonReload()
+		sort.Strings(roots)
+		return warewulfd.ApplyProfileChangeCLI(roots, prevDB, &nodeDB)
 	}
 }

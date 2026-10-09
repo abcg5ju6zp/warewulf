@@ -85,11 +85,20 @@ func RunServer() error {
 	go func() {
 		for range c {
 			wwlog.Info("Received SIGHUP, reloading...")
-			warewulfd.Reload()
+			if err := warewulfd.Reload(); err != nil {
+				wwlog.Warn("SIGHUP reload encountered an error: %s", err)
+			}
+			// Adopt journaled profile changes left by CLI/API writers and
+			// resume any unfinished overlay rebuilds.
+			warewulfd.KickProfileChangeWorker()
 		}
 	}()
 
-	warewulfd.Reload()
+	if err := warewulfd.Reload(); err != nil {
+		wwlog.Warn("Initial configuration reload encountered an error: %s", err)
+	}
+	// Resume profile changes left unfinished by a previous daemon run.
+	warewulfd.KickProfileChangeWorker()
 
 	conf := warewulfconf.Get()
 	daemonPort := conf.Warewulf.Port

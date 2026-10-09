@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"dario.cat/mergo"
@@ -114,41 +115,42 @@ func updateProfile() usecase.Interactor {
 
 	u := usecase.NewInteractor(func(ctx context.Context, input updateProfileInput, output *node.Profile) error {
 		wwlog.Debug("api.updateProfile(ID:%v, Profile:%+v)", input.ID, input.Profile)
-		if registry, err := node.New(); err != nil {
+
+		// Snapshot the current registry; the change is applied to a deep
+		// copy so the transactional validator can compare before/after and
+		// reject the update (cycles, missing references) before any write.
+		prev, err := node.New()
+		if err != nil {
 			return err
-		} else {
-			for _, profile := range input.Profile.Profiles {
-				if _, ok := registry.NodeProfiles[profile]; !ok {
-					return status.Wrap(fmt.Errorf("profile '%s' does not exist", profile), status.InvalidArgument)
-				}
-			}
-			if input.Profile.ImageName != "" && !image.ValidSource(input.Profile.ImageName) {
-				return status.Wrap(fmt.Errorf("image '%s' does not exist", input.Profile.ImageName), status.InvalidArgument)
-			}
-			for _, overlay_ := range input.Profile.SystemOverlay {
-				if _, err = overlay.Get(overlay_); err != nil {
-					return status.Wrap(fmt.Errorf("overlay '%s' does not exist", overlay_), status.InvalidArgument)
-				}
-			}
-			for _, overlay_ := range input.Profile.RuntimeOverlay {
-				if _, err = overlay.Get(overlay_); err != nil {
-					return status.Wrap(fmt.Errorf("overlay '%s' does not exist", overlay_), status.InvalidArgument)
-				}
-			}
-			if profilePtr, err := registry.GetProfilePtr(input.ID); err != nil {
-				return status.Wrap(err, status.NotFound)
-			} else {
-				if err := mergo.MergeWithOverwrite(profilePtr, &input.Profile); err != nil {
-					return err
-				}
-				if err := registry.Persist(); err != nil {
-					return err
-				}
-				warewulfd.Reload()
-				*output = *profilePtr
-				return nil
-			}
 		}
+		if _, err := prev.GetProfile(input.ID); err != nil {
+			return status.Wrap(err, status.NotFound)
+		}
+		next, err := prev.Clone()
+		if err != nil {
+			return err
+		}
+		profilePtr, err := next.GetProfilePtr(input.ID)
+		if err != nil {
+			return status.Wrap(err, status.NotFound)
+		}
+		if err := mergo.MergeWithOverwrite(profilePtr, &input.Profile); err != nil {
+			return err
+		}
+
+		if err := warewulfd.ApplyProfileChangeDaemon([]string{input.ID}, &prev, next); err != nil {
+			if errors.Is(err, warewulfd.ErrInvalidProfileChange) {
+				return status.Wrap(err, status.InvalidArgument)
+			}
+			return err
+		}
+
+		updated, err := next.GetProfile(input.ID)
+		if err != nil {
+			return status.Wrap(err, status.NotFound)
+		}
+		*output = updated
+		return nil
 	})
 	u.SetTitle("Update a profile")
 	u.SetDescription("Update an existing node profile.")
