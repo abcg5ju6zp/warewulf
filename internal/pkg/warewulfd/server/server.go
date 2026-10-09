@@ -89,6 +89,13 @@ func RunServer() error {
 		}
 	}()
 
+	// Remove per-request /files snapshots left behind by a previous daemon
+	// process (restart or crash). Only done at startup: a SIGHUP reload must
+	// not remove snapshots of in-flight requests.
+	if err := warewulfd.CleanupFileSnapshots(); err != nil {
+		wwlog.Warn("%v", err)
+	}
+
 	warewulfd.Reload()
 
 	conf := warewulfconf.Get()
